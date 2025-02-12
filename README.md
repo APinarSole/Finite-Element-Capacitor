@@ -13,7 +13,7 @@ The accuracy of the simulation improves with higher iteration counts and increas
    - `d = 1.4`       # Initial plate separation (m)
    - `point_density = 100`  # Resolution of the grid (points per meter)
    - `size_grid = 2` # Lateral size of the simulation grid (m)
-   - `da = 0.1`      # Distance between the atom and the plate (m)
+   - `da = 0.1`      # Distance between the point charge and the plate (m)
    - `width = 0.1`   # Thickness of the plates (m)
    - `iterations = 30` # Number of iterations for the relaxation method
    - `divisions = 10` # Number of points to sample for z-dependence of potential
