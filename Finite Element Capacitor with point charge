@@ -60,7 +60,7 @@ import time
 # Parameters
 
 V0 = 1     # Potential difference between plates
-q = 0      # point charge in q units 
+q = 1      # point charge in q units 
 L = 1      # Length size of capacitor plates (m)
 d = 1.4      # Distance separation between plates (only for contour plot) (m)
 point_density = 100  # Points per m
