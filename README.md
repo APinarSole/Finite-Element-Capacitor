@@ -30,4 +30,7 @@ The accuracy of the simulation improves with higher iteration counts and increas
 
 **Notes:**
 - Increasing the number of iterations and point density improves the accuracy of the results but also increases computation time.
-- Ensure that the plate size (`L`) is not excessively large relative to the grid size (`size_grid`) to avoid excessive computation.
+- Ensure that the plate size (`L`) is not excessively large relative to the grid size (`size_grid`) to avoid excessive computation
+  
+# This script is inspired in the one created by Luke Polson (Mr. P. Solver) 
+# https://github.com/lukepolson/youtube_channel/blob/main/Python%20Metaphysics%20Series/vid31.ipynb
