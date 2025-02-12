@@ -1,0 +1,241 @@
+# ## Introduction
+# This script implements a finite element method to model a plate capacitor using the relaxation method. The method iteratively solves Laplace's equation
+# to determine the potential distribution between the capacitor plates. The script provides three main outputs:
+# 1. A contour plot of the potential (V) at the midplane.
+# 2. The capacitance (C) as a function of plate separation.
+# 3. The potential (V) at the center as a function of plate separation.
+# 4. A point charge q can be added as a little cube with fixed V inside
+# The accuracy of the simulation improves with higher iteration counts and increased point density, but at the cost of longer computation times. Care 
+# should be taken not to set excessively large plate sizes.
+
+# ## How to Use the Code
+# 1. **Set Parameters:**
+#    - `V0`: Potential difference between the plates.
+#    - `q`: Charge in elementary charge units.
+#    - `L`: Side length of capacitor plates (meters).
+#    - `d`: Initial plate separation (meters).
+#    - `point_density`: Resolution of the grid (points per meter).
+#    - `size_grid`: Lateral size of the simulation grid (meters).
+#    - `da`: Distance between the atom and the plate (meters).
+#    - `width`: Thickness of the plates (meters).
+#    - `iterations`: Number of iterations for the relaxation method.
+#    - `divisions`: Number of points to sample for z-dependence of potential.
+
+# 2. **Run the Script:**
+#    - The script solves for the potential distribution using the relaxation method.
+#    - A contour plot of the potential at the midplane is generated.
+#    - The potential at the center and the capacitance as a function of plate separation are computed and plotted.
+   
+# 3. **Interpreting Results:**
+#    - The contour plot visualizes how potential varies in the capacitor.
+#    - The potential at the center and capacitance are displayed for various plate separations.
+#    - The script prints key data, such as computed capacitance values and execution time.
+
+# **Notes:**
+# - Increasing the number of iterations and point density improves the accuracy of the results but also increases computation time.
+# - Ensure that the plate size (`L`) is not excessively large relative to the grid size (`size_grid`).
+
+# This script is inspired in the one created by Luke Polson (Mr. P. Solver) 
+# https://github.com/lukepolson/youtube_channel/blob/main/Python%20Metaphysics%20Series/vid31.ipynb
+
+
+
+import numpy as np
+from scipy.ndimage import convolve, generate_binary_structure
+from numba import njit
+import os
+import re
+import matplotlib.pyplot as plt
+import scipy.optimize
+import nanonispy2 as nap
+from scipy.optimize import curve_fit
+from scipy.ndimage import gaussian_filter1d
+from scipy.interpolate import RectBivariateSpline
+from scipy.spatial.distance import cdist
+from scipy.constants import e, epsilon_0
+import time
+
+
+
+# Parameters
+
+V0 = 1     # Potential difference between plates
+q = 0      # point charge in q units 
+L = 1      # Length size of capacitor plates (m)
+d = 1.4      # Distance separation between plates (only for contour plot) (m)
+point_density = 100  # Points per m
+size_grid = 2 #lateral lenght of the grid in meters, mind the plate lenght and d to fit in (m)
+da = 0.1 #distance point charge-plate (m)
+width = 0.1 # width plates (m)
+iterations = 30 # iterations for the relaxation
+divisions= 10 # height division for z dependence
+
+
+# functions 
+@njit
+def neumann(a):
+    """Apply Neumann boundary conditions."""
+    a[0, :, :] = a[1, :, :]
+    a[-1, :, :] = a[-2, :, :]
+    a[:, 0, :] = a[:, 1, :]
+    a[:, -1, :] = a[:, -2, :]
+    a[:, :, 0] = a[:, :, 1]
+    a[:, :, -1] = a[:, :, -2]
+    return a
+
+def laplace(d, V0, q, L, point_density, size_grid, da, width, iterations):
+    """Calculate the potential."""
+    epsilon_0 = 8.8541878188e-12  # Vacuum permittivity (F/m)
+    e = 1.602e-19  # Elementary charge in coulombs
+    
+    L = int(point_density * L)
+    d = int(point_density * d)
+    dp = [int(point_density * (size_grid / 2)), 
+          int(point_density * (size_grid / 2)), 
+          int(point_density * (size_grid / 2 - d / 2 + da))]
+    N = int(point_density * size_grid)
+    w = int(point_density * width)
+    m = N // 2
+    charge_density = q * e / 18  # Charge density of the little cube
+    Vq = charge_density / epsilon_0  # Potential of the cube
+
+    if L > size_grid * point_density:
+        print('Capacitor size off the grid')
+    if d + 2 * w > size_grid * point_density:
+        print('Capacitor separation off the grid')
+
+    grid = np.full((N, N, N), V0 / 2)  # Initial guess for potential
+
+    if w != 0:
+        for x in range(w):
+            grid[m - L // 2:m + L // 2, m - L // 2:m + L // 2, m - d // 2 - x] = V0
+            grid[m - L // 2:m + L // 2, m - L // 2:m + L // 2, m + d // 2 + x] = 0
+    else:
+        grid[m - L // 2:m + L // 2, m - L // 2:m + L // 2, m - d // 2] = V0
+        grid[m - L // 2:m + L // 2, m - L // 2:m + L // 2, m + d // 2] = 0
+
+    mask_pos = grid == V0
+    mask_neg = grid == 0
+
+    if Vq != 0:
+        grid[dp[0] - 1:dp[0] + 2, dp[1] - 1:dp[1] + 2, dp[2] - 1:dp[2] + 2] = Vq
+        mask_q = grid == Vq
+
+    # Generate initial conditions for potential
+    _, _, zv = np.meshgrid(np.arange(N), np.arange(N), np.arange(N))
+    grid = 1 - zv / 100  # Linear approximation to mimic potential decay
+    kern = generate_binary_structure(3, 1).astype(float) / 6
+    kern[1, 1, 1] = 0
+
+    # Iterative solution for the potential
+    err = []
+    for _ in range(iterations):
+        grid_updated = convolve(grid, kern, mode='constant')
+        grid_updated = neumann(grid_updated)
+        grid_updated[mask_pos] = V0
+        grid_updated[mask_neg] = 0
+        if Vq != 0:
+            grid_updated[mask_q] = Vq
+        err.append(np.mean((grid - grid_updated) ** 2))
+        grid = grid_updated
+
+    # Compute electric field
+    dx = dy = dz = 1 / point_density
+    E_z, E_y, E_x = np.gradient(-grid, dx, axis=(0, 1, 2))
+    
+    # Compute electric flux density
+    D_x, D_y, D_z = epsilon_0 * E_x, epsilon_0 * E_y, epsilon_0 * E_z
+    
+    # Compute energy density
+    energy_density = 0.5 * (D_x * E_x + D_y * E_y + D_z * E_z)
+    W = np.sum(energy_density[m - L // 2:m + L // 2, 
+                              m - L // 2:m + L // 2, 
+                              N // 2 - d // 2:N // 2 + d // 2]) * dx * dy * dz
+    
+    # Capacitance calculation
+    C = (2e12) * W / V0 ** 2  # Convert to pF
+    C = round(C, 2)
+    print(f"Capacitance: {C} pF")
+    
+    return grid, C
+
+
+#plotting
+
+start_time = time.time()
+
+z = np.linspace(0.2, d, divisions)  #points z pot (m)
+pot1, cap1 = laplace(z[-1],V0, q, L, point_density,size_grid ,da,width, iterations) 
+NN = len(pot1[0])
+slc = NN // 2  # Middle slice of the grid
+
+# Plot the contour
+plt.figure(figsize=(6, 5))
+CS = plt.contour(np.arange(NN) / NN, np.arange(NN) / NN, pot1[slc], levels=50, cmap='coolwarm')
+plt.clabel(CS, CS.levels, inline=True, fontsize=6)
+plt.plot((NN / 2 + int(z[-1] * point_density) // 2 - 1)/ NN, slc / NN, 'ko' )
+plt.xlabel("$z (m)$")
+plt.ylabel("$y (m)$")
+plt.title("Contour of Potential at Midplane (d="+str(z[-1])+' A)')
+plt.colorbar(label="Potential (V)")
+plt.show()
+
+# Calculate and plot potential and capacitance vs plate separation
+potential = []
+C = []
+
+for x in z:
+    grid, cap = laplace(x,V0, q, L , point_density,size_grid,da,width, iterations)
+    cap = round(cap, 2)
+    slc_pos = int(NN / 2 + int(x * point_density) // 2 - 1)  # position one point below the plate that moves to obtain the potential there
+    pot2 = round(grid[slc, slc, slc_pos], 3)  # Potential at the center
+    potential.append(pot2)
+    C.append(cap)
+    print(f"Z = {x:.2f} m | V = {pot2:.3f} V | C = {cap:.2f} pF")
+
+# Plot potential and capacitance vs plate separation side by side
+fig, axs = plt.subplots(1, 2, figsize=(14, 6), sharex=True)
+
+# Plot potential vs plate separation
+axs[0].plot(z, potential, label="Potential at Center", marker="o", color='tab:blue')
+axs[0].set_xlabel("Plate Separation (m)", fontsize=12)
+axs[0].set_ylabel("Potential (V)", fontsize=12)
+axs[0].set_title("Potential vs Plate Separation", fontsize=14)
+axs[0].legend()
+axs[0].grid(True)
+
+# Plot capacitance vs plate separation
+axs[1].plot(z, C, label="Capacitance", marker="s", color='tab:orange')
+axs[1].set_xlabel("Plate Separation (m)", fontsize=12)
+axs[1].set_ylabel("Capacitance (pF)", fontsize=12)
+axs[1].set_title("Capacitance vs Plate Separation", fontsize=14)
+axs[1].legend()
+axs[1].grid(True)
+
+# Adjust layout
+plt.tight_layout()
+plt.show()
+
+end_time = time.time()
+
+# Print elapsed time
+print(f"Time taken: {end_time - start_time:.4f} seconds")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
